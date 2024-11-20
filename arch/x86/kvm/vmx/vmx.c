@@ -72,6 +72,8 @@
 #include "smm.h"
 #include "vmx_onhyperv.h"
 #include "posted_intr.h"
+#include <linux/printk.h> // For printk
+ 
 
 MODULE_AUTHOR("Qumranet");
 MODULE_DESCRIPTION("KVM support for VMX (Intel VT-x) extensions");
@@ -6448,21 +6450,61 @@ void dump_vmcs(struct kvm_vcpu *vcpu)
  * The guest has exited.  See if we can fix it or if we need userspace
  * assistance.
  */
-static int __vmx_handle_exit(struct kvm_vcpu *vcpu, fastpath_t exit_fastpath)
+static unsigned long long exit_counters[256] = {0}; 
+static unsigned long long total_exits = 0;
+
+static const char *kvm_exit_reason_to_string(int reason) {
+    switch (reason) {
+    case 0: return "EXCEPTION_NMI";
+    case 1: return "EXTERNAL_INTERRUPT";
+    case 2: return "TRIPLE_FAULT";
+    case 9: return "CPUID";
+    case 28: return "HLT";
+    case 30: return "MSR_WRITE";
+    case 48: return "EPT_MISCONFIG";
+    default: return "UNKNOWN_EXIT";
+    }
+}
+
+static int __vmx_handle_exit(struct kvm_vcpu *vcpu, fastpath_t exit_fastpath) {
+    struct vcpu_vmx *vmx = to_vmx(vcpu);
+    union vmx_exit_reason exit_reason = vmx->exit_reason;
+    u32 vectoring_info = vmx->idt_vectoring_info;
+    u16 exit_handler_index;
+
+    /* Add the counters at the start of the function */
+    int exit_type = exit_reason.basic; // Get the exit type number
+    exit_counters[exit_type]++;
+    total_exits++;
+
+    /* Print every 10,000 total exits */
+    if (total_exits % 10000 == 0) {
+        int i;
+        for (i = 0; i < 256; i++) {
+            if (exit_counters[i] > 0) {
+                printk(KERN_INFO "KVM Exit: %d (%s) occurred %llu times\n",
+                       i, kvm_exit_reason_to_string(i), exit_counters[i]);
+            }
+        }
+    }
+
+
+/*static int __vmx_handle_exit(struct kvm_vcpu *vcpu, fastpath_t exit_fastpath)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	union vmx_exit_reason exit_reason = vmx->exit_reason;
 	u32 vectoring_info = vmx->idt_vectoring_info;
 	u16 exit_handler_index;
 
-	/*
+*/	
+ 	/*
 	 * Flush logged GPAs PML buffer, this will make dirty_bitmap more
 	 * updated. Another good is, in kvm_vm_ioctl_get_dirty_log, before
 	 * querying dirty_bitmap, we only need to kick all vcpus out of guest
 	 * mode as if vcpus is in root mode, the PML buffer must has been
 	 * flushed already.  Note, PML is never enabled in hardware while
 	 * running L2.
-	 */
+	 */	 
 	if (enable_pml && !is_guest_mode(vcpu))
 		vmx_flush_pml_buffer(vcpu);
 
@@ -6472,14 +6514,17 @@ static int __vmx_handle_exit(struct kvm_vcpu *vcpu, fastpath_t exit_fastpath)
 	 * invalid guest state should never happen as that means KVM knowingly
 	 * allowed a nested VM-Enter with an invalid vmcs12.  More below.
 	 */
+
 	if (KVM_BUG_ON(vmx->nested.nested_run_pending, vcpu->kvm))
 		return -EIO;
 
 	if (is_guest_mode(vcpu)) {
+		
 		/*
 		 * PML is never enabled when running L2, bail immediately if a
 		 * PML full exit occurs as something is horribly wrong.
 		 */
+
 		if (exit_reason.basic == EXIT_REASON_PML_FULL)
 			goto unexpected_vmexit;
 
@@ -6516,7 +6561,7 @@ static int __vmx_handle_exit(struct kvm_vcpu *vcpu, fastpath_t exit_fastpath)
 			return 1;
 	}
 
-	/* If guest state is invalid, start emulating.  L2 is handled above. */
+	/* If guest state is invalid, start emulating.  L2 is handled above */ 
 	if (vmx->emulation_required)
 		return handle_invalid_guest_state(vcpu);
 
@@ -6580,6 +6625,7 @@ static int __vmx_handle_exit(struct kvm_vcpu *vcpu, fastpath_t exit_fastpath)
 			 * disabled. So we pull the trigger after 1 s of
 			 * futile waiting, but inform the user about this.
 			 */
+
 			printk(KERN_WARNING "%s: Breaking out of NMI-blocked "
 			       "state on VCPU %d after 1 s timeout\n",
 			       __func__, vcpu->vcpu_id);
@@ -6626,6 +6672,8 @@ unexpected_vmexit:
 	vcpu->run->internal.data[1] = vcpu->arch.last_vmentry_cpu;
 	return 0;
 }
+
+
 
 int vmx_handle_exit(struct kvm_vcpu *vcpu, fastpath_t exit_fastpath)
 {
