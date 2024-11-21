@@ -255,3 +255,6 @@ Least Frequent Exits
 2.	EXCEPTION NMI: 11 occurrences.
 
 3.	HLT (Halt Instruction): 1 occurrence.
+
+
+![App Screenshot](https://github.com/muthapriyanka/linux/blob/master/Screenshots/Assignment2_result.png)
